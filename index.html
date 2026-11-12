@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SHP 圖資線上處理工具</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1d2733;--mu:#667585;--bd:#d9dee5;--ac:#1f6feb;--ok:#1a7f37;--er:#cf222e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14181d;--card:#1d232b;--tx:#e6ebf0;--mu:#8d9aa8;--bd:#313a45;--ac:#58a6ff;--ok:#3fb950;--er:#f85149}}
+:root[data-theme="dark"]{--bg:#14181d;--card:#1d232b;--tx:#e6ebf0;--mu:#8d9aa8;--bd:#313a45;--ac:#58a6ff;--ok:#3fb950;--er:#f85149}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 system-ui,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--mu);margin:0 0 18px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h2{font-size:16px;margin:0 0 10px}
+.card.off{opacity:.5;pointer-events:none}
+label{display:block;font-size:13px;color:var(--mu);margin:8px 0 4px}
+input[type=file],select{width:100%;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:10px 18px;font:inherit;font-weight:600;cursor:pointer;margin-top:12px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.st{margin-top:10px;font-size:13px;color:var(--mu);white-space:pre-wrap}.ok{color:var(--ok)}.er{color:var(--er)}
+.bar{height:6px;background:var(--bd);border-radius:4px;margin-top:10px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--ac);transition:width .15s}
+.tw{overflow-x:auto;margin-top:10px}table{border-collapse:collapse;font-size:12px;white-space:nowrap}td,th{border:1px solid var(--bd);padding:3px 8px;text-align:right}th{background:var(--bg)}
+</style>
+</head>
+<body>
+<main>
+<h1>SHP 圖資線上處理工具</h1>
+<p class="sub">Clip → Intersect → 面積計算 → 樞紐分析 → Excel。全程在瀏覽器內運算，檔案不會上傳至伺服器。</p>
+
+<section class="card" id="c1">
+<h2>步驟 1　上傳圖層、裁切 CLIP 並相交 INTERSECT</h2>
+<label>輸入圖層（含 CGRID_ID 的 1KM 網格；.zip 內含 .shp/.dbf/.prj）</label>
+<input type="file" id="f1" accept=".zip">
+<label>Overlay 圖層（含 LCODE_C1、LCODE_C2；.zip）</label>
+<input type="file" id="f2" accept=".zip">
+<button id="b1">執行 Clip + Intersect</button>
+<div class="bar"><i id="p1"></i></div>
+<div class="st" id="s1"></div>
+</section>
+
+<section class="card off" id="c2">
+<h2>步驟 2　新增面積欄位並計算</h2>
+<label>面積投影座標系</label>
+<select id="crs">
+<option value="auto">自動（經度 &lt; 120° 用 TWD97 TM2 119，其餘用 121）</option>
+<option value="121">TWD97 TM2 121（EPSG:3826，臺灣本島）</option>
+<option value="119">TWD97 TM2 119（EPSG:3825，澎湖、金門）</option>
+</select>
+<button id="b2">計算面積 (AREA_M2，單位 m²)</button>
+<div class="st" id="s2"></div>
+</section>
+
+<section class="card off" id="c3">
+<h2>步驟 3　樞紐分析並匯出 Excel</h2>
+<button id="b3">產生樞紐表並下載 Excel</button>
+<div class="st" id="s3"></div>
+<div class="tw" id="pv"></div>
+</section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const EN="AREA_SUM,L01_SUM,L0101,L0102,L0103,L0104,L02_SUM,L0201,L0202,L0203,L0204,L0205,L0206,L0207,L03_SUM,L0301,L0302,L0303,L0304,L0305,L0306,L04_SUM,L0401,L0402,L0403,L0404,L0405,L0406,L05_SUM,L0501,L0502,L0503,L0504,L0505,L0506,L0507,L0508,L06_SUM,L0601,L0602,L0603,L0604,L0605,L0606,L07_SUM,L0701,L0702,L0703,L08_SUM,L0801,L0802,L0803,L09_SUM,L0901,L0902,L0903,L0904,L0905".split(",");
+const ZH="三級網格代碼,土地面積總數,農業利用土地總數,農作使用,水產養殖,畜牧,農業相關設施,森林利用土地總數,針葉林,闊葉林,竹林,混淆林,灌木林,待成林地,其他森林利用土地,交通利用土地總數,機場,一般鐵路及相關設施,高速鐵路及相關設施,捷運及相關設施,道路及相關設施,港口,水利利用土地總數,河道及溝渠,蓄水設施,水道沙洲灘地,水利構造物,防汛道路,海面,建築利用土地總數,商業,純住宅,混合使用住宅,製造業,倉儲,宗教,殯葬設施,其他建築用地,公共利用土地總數,政府機關,學校,醫療保健,社會福利設施,公用設備,環保設施,遊憩利用土地總數,文化設施,公園綠地廣場,休閒設施,鹽礦利用土地總數,礦業及相關設施,土石及相關設施,鹽業及相關設施,其他利用土地總數,溼地,草生地,裸露地,營建剩餘土石收容處理相關設施,空置地".split(",");
+const PJ={121:"+proj=tmerc +lat_0=0 +lon_0=121 +k=0.9999 +x_0=250000 +y_0=0 +ellps=GRS80 +units=m +no_defs",
+119:"+proj=tmerc +lat_0=0 +lon_0=119 +k=0.9999 +x_0=250000 +y_0=0 +ellps=GRS80 +units=m +no_defs"};
+let layerA=null,layerB=null,inter=[];
+const tick=()=>new Promise(r=>setTimeout(r,0));
+const setS=(id,t,c)=>{const e=$(id);e.textContent=t;e.className="st "+(c||"")};
+
+async function readZip(file){
+  let g=await shp(await file.arrayBuffer());
+  if(Array.isArray(g)) g={type:"FeatureCollection",features:g.flatMap(x=>x.features)};
+  g.features=g.features.filter(f=>f.geometry&&/Polygon/.test(f.geometry.type));
+  return g;
+}
+$("b1").onclick=async()=>{
+  const fa=$("f1").files[0],fb=$("f2").files[0];
+  if(!fa||!fb) return setS("s1","請先選擇兩個 .zip 圖層檔","er");
+  $("b1").disabled=true;
+  try{
+    setS("s1","讀取圖層…");
+    layerA=await readZip(fa); layerB=await readZip(fb);
+    const A=layerA.features,B=layerB.features;
+    if(!A.length||!B.length) throw new Error("圖層中沒有面狀圖徵");
+    // CLIP：以 Overlay 範圍裁切輸入圖層
+    const ob=turf.bbox(layerB),clipped=[];
+    for(let i=0;i<A.length;i++){
+      const bb=turf.bbox(A[i]);
+      if(bb[0]>ob[2]||bb[2]<ob[0]||bb[1]>ob[3]||bb[3]<ob[1]) continue;
+      let f=A[i];
+      if(bb[0]<ob[0]||bb[1]<ob[1]||bb[2]>ob[2]||bb[3]>ob[3]){try{f=turf.bboxClip(A[i],ob);f.properties=A[i].properties}catch(e){}}
+      clipped.push(f);
+    }
+    // INTERSECT：保留兩圖層所有欄位
+    const bbs=B.map(b=>turf.bbox(b)),aKeys=new Set(Object.keys(A[0].properties||{}));
+    inter=[];let n=0;
+    for(const a of clipped){
+      const ab=turf.bbox(a);
+      for(let j=0;j<B.length;j++){
+        const b=bbs[j];
+        if(ab[0]>b[2]||ab[2]<b[0]||ab[1]>b[3]||ab[3]<b[1]) continue;
+        let r=null;try{r=turf.intersect(a,B[j])}catch(e){}
+        if(!r||!r.geometry) continue;
+        const p={...a.properties};
+        for(const k in B[j].properties){p[aKeys.has(k)?k+"_2":k]=B[j].properties[k]}
+        inter.push({type:"Feature",properties:p,geometry:r.geometry});
+      }
+      if(++n%20==0){$("p1").style.width=(n/clipped.length*100)+"%";setS("s1",`相交運算中 ${n}/${clipped.length}`);await tick()}
+    }
+    $("p1").style.width="100%";
+    if(!inter.length) throw new Error("兩圖層無相交區域，請確認座標系統（.prj）是否正確");
+    setS("s1",`完成：輸入圖層 ${A.length} → Clip 後 ${clipped.length} 筆；Overlay ${B.length} 筆；相交結果 ${inter.length} 筆`,"ok");
+    $("c2").classList.remove("off");
+  }catch(e){setS("s1","錯誤："+e.message,"er")}
+  $("b1").disabled=false;
+};
+
+function ringArea(r,pj){
+  let s=0,p=r.map(c=>proj4("EPSG:4326",pj,[c[0],c[1]]));
+  for(let i=0,l=p.length-1;i<l;i++) s+=p[i][0]*p[i+1][1]-p[i+1][0]*p[i][1];
+  return Math.abs(s)/2;
+}
+function polyArea(rings,pj){return rings.reduce((s,r,i)=>s+(i?-1:1)*ringArea(r,pj),0)}
+$("b2").onclick=async()=>{
+  $("b2").disabled=true;setS("s2","計算中…");await tick();
+  try{
+    const m=$("crs").value;
+    for(const f of inter){
+      let z=m;
+      if(m=="auto"){const c=turf.centroid(f).geometry.coordinates[0];z=c<120?119:121}
+      const pj=PJ[z],g=f.geometry;
+      f.properties.AREA_M2=Math.round((g.type=="Polygon"?polyArea(g.coordinates,pj):g.coordinates.reduce((s,p)=>s+polyArea(p,pj),0))*10000)/10000;
+    }
+    const tot=inter.reduce((s,f)=>s+f.properties.AREA_M2,0);
+    setS("s2",`完成：已新增 AREA_M2 欄位，共 ${inter.length} 筆，總面積 ${tot.toLocaleString(undefined,{maximumFractionDigits:2})} m²`,"ok");
+    $("c3").classList.remove("off");
+  }catch(e){setS("s2","錯誤："+e.message,"er")}
+  $("b2").disabled=false;
+};
+
+$("b3").onclick=async()=>{
+  try{
+    const ks=Object.keys(inter[0].properties);
+    const fk=n=>ks.find(k=>k.toUpperCase()===n);
+    const kID=fk("CGRID_ID"),k1=fk("LCODE_C1"),k2=fk("LCODE_C2");
+    const miss=[[kID,"CGRID_ID"],[k1,"LCODE_C1"],[k2,"LCODE_C2"]].filter(x=>!x[0]).map(x=>x[1]);
+    if(miss.length) throw new Error("屬性表缺少欄位："+miss.join("、")+"（現有欄位："+ks.join(", ")+"）");
+    if(!ks.includes("AREA_M2")) throw new Error("請先執行步驟 2 計算面積");
+    // 代碼正規化：L0101 / 0101 / 101 / "01 " 皆可辨識
+    const norm=(v,len)=>{
+      let s=String(v??"").trim().toUpperCase().replace(/^L/,"").replace(/\.0+$/,"").replace(/\D/g,"");
+      if(!s) return "";
+      return "L"+s.padStart(len,"0");
+    };
+    const valid=new Set(EN),g=new Map(),bad=new Map();
+    for(const f of inter){
+      const p=f.properties,id=p[kID],a=Number(p.AREA_M2)||0;
+      let c2=norm(p[k2],4),c1=norm(p[k1],2);
+      if(c2.length!=5) c2=c2.length>5?c2.slice(0,5):c2;
+      if(c1.length!=3) c1=c2.length>=3?c2.slice(0,3):"";
+      if(!g.has(id)) g.set(id,{});
+      const o=g.get(id);
+      o.AREA_SUM=(o.AREA_SUM||0)+a;
+      const s1=c1+"_SUM";
+      if(valid.has(s1)) o[s1]=(o[s1]||0)+a; else bad.set(String(p[k1]),1);
+      if(valid.has(c2)) o[c2]=(o[c2]||0)+a; else bad.set(String(p[k2]),1);
+    }
+    window._bad=[...bad.keys()].slice(0,10);
+    const rows=[["L3_ID",...EN],ZH];
+    [...g.keys()].sort().forEach(id=>{
+      const o=g.get(id);
+      rows.push([id,...EN.map(k=>Math.round((o[k]||0)*100)/100)]);
+    });
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"]=rows[0].map((_,i)=>({wch:i?14:16}));
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"樞紐分析");
+    const buf=XLSX.write(wb,{type:"array",bookType:"xlsx"});
+    const fn="樞紐分析結果.xlsx";
+    $("pv").innerHTML="<table><tr>"+rows[0].slice(0,8).map(x=>`<th>${x}</th>`).join("")+"<th>…</th></tr>"+
+      rows.slice(1,7).map(r=>"<tr>"+r.slice(0,8).map(x=>`<td>${x}</td>`).join("")+"<td>…</td></tr>").join("")+"</table>";
+    setS("s3",`已產生 ${g.size} 個網格的樞紐表（預覽前 5 列）`+(window._bad.length?`\n⚠ 以下代碼無法對應輸出欄位：${window._bad.join("、")}`:""),"ok");
+    let d=null;try{d=await claude.use("downloads")}catch(e){}
+    if(d){try{await d.save({filename:fn,data:buf});setS("s3",`下載完成：${fn}（${g.size} 個網格）`+(window._bad.length?`\n⚠ 以下代碼無法對應輸出欄位：${window._bad.join("、")}`:""),"ok")}catch(e){if(e.code!="declined")setS("s3","下載失敗："+(e.message||e.code),"er")}}
+    else{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([buf]));a.download=fn;a.click()}
+  }catch(e){setS("s3","錯誤："+e.message,"er")}
+};
+</script>
+</body>
+</html>
